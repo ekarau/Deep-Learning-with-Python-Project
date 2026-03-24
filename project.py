@@ -4,8 +4,15 @@ import torch.optim as optim
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
+from tqdm import tqdm
+import pandas as pd
 
-# ----- 1. DATA PREPARATION (Train/Test Split) -----
+# ----- 0. REPRODUCIBILITY -----
+# Setting the random seed to ensure the experiment yields exactly the same results every time it is run.
+torch.manual_seed(42)
+
+# ----- 1. DATA PREPARATION -----
+# Downloading and loading the MNIST dataset, then splitting it into batches for training and testing.
 transform = transforms.ToTensor()
 train_data = datasets.MNIST(root="./data", train=True, download=True, transform=transform)
 test_data = datasets.MNIST(root="./data", train=False, download=True, transform=transform)
@@ -15,18 +22,18 @@ test_loader = DataLoader(test_data, batch_size=64, shuffle=False)
 
 # ----- 2. MODEL DEFINITIONS -----
 
-# Breadth - Baseline Model (Logistic Regression)
+# Baseline Model: A simple logistic regression model with no hidden layers.
 class BaselineModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(28*28, 10) # No hidden layers, strictly linear mapping
+            nn.Linear(28*28, 10)
         )
     def forward(self, x):
         return self.net(x)
 
-# Depth - Deep MLP with 4 Hidden Layers and Regularization
+# Deep MLP: A deep neural network with 4 hidden layers and dropout for regularization.
 class DeepMLP(nn.Module):
     def __init__(self, activation):
         super().__init__()
@@ -34,13 +41,13 @@ class DeepMLP(nn.Module):
             nn.Flatten(),
             nn.Linear(28*28, 128),
             activation,
-            nn.Dropout(0.2), # Breadth - Dropout regularization to prevent overfitting
+            nn.Dropout(0.2), # Regularization to prevent overfitting
 
             nn.Linear(128, 128),
             activation,
             nn.Dropout(0.2),
 
-            nn.Linear(128, 128), # Depth: Increasing depth to demonstrate vanishing gradients
+            nn.Linear(128, 128), # Increased depth to analyze vanishing gradients
             activation,
             nn.Dropout(0.2),
             
@@ -55,18 +62,19 @@ class DeepMLP(nn.Module):
 
 # ----- 3. TRAINING AND EVALUATION LOOP -----
 def train_and_evaluate(model, name, epochs=15):
-    print(f"\n--- Training Model: {name} ---")
-    
-    # Using SGD instead of Adam. SGD illustrates the 'Vanishing Gradient' flaw of Sigmoid more clearly.
+    # Using SGD to clearly illustrate the 'Vanishing Gradient' flaw of Sigmoid.
     optimizer = optim.SGD(model.parameters(), lr=0.01)
     loss_fn = nn.CrossEntropyLoss()
 
     train_losses = []
     test_accuracies = []
 
-    for epoch in range(epochs):
+    # Progress bar setup
+    pbar = tqdm(range(epochs), desc=f"Training {name: <30}", unit="epoch")
+
+    for epoch in pbar:
         # Training Phase
-        model.train() # Activates Dropout
+        model.train() 
         total_loss = 0
         for x, y in train_loader:
             optimizer.zero_grad()
@@ -79,11 +87,11 @@ def train_and_evaluate(model, name, epochs=15):
         avg_train_loss = total_loss / len(train_loader)
         train_losses.append(avg_train_loss)
 
-        # Evaluation (Test) Phase - To measure Generalization
-        model.eval() # Deactivates Dropout, enabling all neurons
+        # Evaluation (Test) Phase to measure generalization
+        model.eval() 
         correct = 0
         total = 0
-        with torch.no_grad(): # Disabling gradient calculation to save memory
+        with torch.no_grad(): 
             for x, y in test_loader:
                 pred = model(x)
                 _, predicted = torch.max(pred.data, 1)
@@ -93,18 +101,19 @@ def train_and_evaluate(model, name, epochs=15):
         accuracy = 100 * correct / total
         test_accuracies.append(accuracy)
         
-        print(f"Epoch {epoch+1}/{epochs} | Train Loss: {avg_train_loss:.4f} | Test Accuracy: {accuracy:.2f}%")
+        # Updating progress bar metrics
+        pbar.set_postfix({'Train Loss': f"{avg_train_loss:.4f}", 'Test Acc': f"{accuracy:.2f}%"})
 
     return train_losses, test_accuracies
 
-# ----- 4. RUNNING THE EXPERIMENTS (T-Shaped Model Implementation) -----
-epochs_to_run = 15 # 15 epochs is ideal to clearly see the differences in deep networks
+# ----- 4. RUNNING THE EXPERIMENTS -----
+epochs_to_run = 15
 
 # 1. Baseline Model
 base_model = BaselineModel()
 base_loss, base_acc = train_and_evaluate(base_model, "Baseline (Logistic Regression)", epochs=epochs_to_run)
 
-# 2. Deep MLP Models (Varying only the activation functions)
+# 2. Deep MLP Models (Varying the activation functions)
 relu_model = DeepMLP(nn.ReLU())
 relu_loss, relu_acc = train_and_evaluate(relu_model, "Deep MLP - ReLU", epochs=epochs_to_run)
 
@@ -117,7 +126,35 @@ tanh_loss, tanh_acc = train_and_evaluate(tanh_model, "Deep MLP - Tanh", epochs=e
 leaky_model = DeepMLP(nn.LeakyReLU(0.01))
 leaky_loss, leaky_acc = train_and_evaluate(leaky_model, "Deep MLP - LeakyReLU", epochs=epochs_to_run)
 
-# ----- 5. VISUALIZING THE RESULTS -----
+# ----- 5. FINAL SUMMARY TABLE -----
+print("\n" + "="*60)
+print(" 🎓 FINAL RESULTS SUMMARY (After 15 Epochs)")
+print("="*60)
+
+results = {
+    "Model Architecture": [
+        "Baseline (Logistic Regression)", 
+        "Deep MLP - ReLU", 
+        "Deep MLP - Sigmoid", 
+        "Deep MLP - Tanh", 
+        "Deep MLP - LeakyReLU"
+    ],
+    "Final Train Loss": [
+        base_loss[-1], relu_loss[-1], sig_loss[-1], tanh_loss[-1], leaky_loss[-1]
+    ],
+    "Final Test Acc (%)": [
+        base_acc[-1], relu_acc[-1], sig_acc[-1], tanh_acc[-1], leaky_acc[-1]
+    ]
+}
+
+df_results = pd.DataFrame(results)
+df_results["Final Train Loss"] = df_results["Final Train Loss"].round(4)
+df_results["Final Test Acc (%)"] = df_results["Final Test Acc (%)"].round(2)
+
+print(df_results.to_markdown(index=False))
+print("="*60 + "\n")
+
+# ----- 6. VISUALIZING THE RESULTS -----
 plt.figure(figsize=(14, 6))
 
 # Plot 1: Training Loss (Learning Dynamics)
@@ -127,7 +164,7 @@ plt.plot(relu_loss, label="ReLU", linewidth=2)
 plt.plot(sig_loss, label="Sigmoid", linewidth=2)
 plt.plot(tanh_loss, label="Tanh", linewidth=2)
 plt.plot(leaky_loss, label="LeakyReLU", linewidth=2)
-plt.yscale("log") # Log scale to better visualize the differences
+plt.yscale("log")
 plt.title("Training Loss - Vanishing Gradient Analysis")
 plt.xlabel("Epoch")
 plt.ylabel("Loss (Log Scale)")
@@ -148,4 +185,6 @@ plt.legend()
 plt.grid(True, alpha=0.5)
 
 plt.tight_layout()
-plt.show()
+
+plt.savefig("activation_functions_comparison.png", dpi=300, bbox_inches='tight')
+print("Plot successfully saved as 'activation_functions_comparison.png'!")
